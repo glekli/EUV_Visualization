@@ -1,0 +1,43 @@
+/* style.css */
+
+body{
+    margin: 0;
+    padding: 0;
+}
+
+.body {
+    font-family: 'Poppins', sans-serif;
+    background-color: rgb(236, 156, 95);
+    place-items: center;
+    height: 100vh;
+    /* overflow: hidden; */
+    margin: 0px;
+}
+
+.search-box {
+    width: 600px;
+    padding: 25px 30px;
+    /* margin-top: 3%;
+    margin-left: 34%; */
+    margin: auto;
+    margin-top: 3%;
+    background-color: white;
+    border: black;
+    border-radius: 10px;
+    box-sizing: border-box;
+    box-shadow: 5px 5px 20px #888888;
+    
+}
+#results-containerMain
+{
+    height: 100vh;    
+    background-color: rgb(236, 156, 95);
+}
+#results-container{
+    height: max-content;
+    width: max-content;
+    margin: auto;
+    background-color: white;
+    border-radius: 10px;
+    box-shadow: 5px 5px 20px #888888;
+}
