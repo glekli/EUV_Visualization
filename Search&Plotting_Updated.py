@@ -8,6 +8,10 @@ from datetime import datetime as dt
 import warnings
 import math
 import pandas as pd
+import time
+import json
+import requests
+import re
 
 testf = h5py.File(r"C:\PHYS\SpecCal\euv_fitting\euv_fitting\euvh5\EUV.h5", 'r')
 
@@ -44,8 +48,8 @@ element_label_style = {'font-weight': 'bold'}
 dropdown_style = {'width': '80%', 'padding': '5px', 'box-sizing': 'border-box'}
 input_style = {'width': '50%'}
 button_style = {'className': 'btn btn-primary'}
-header_style = {'font-size': '36px', 'text-align': 'center', 'margin':'0px'}
-search_button={'margin-left':'40%', 'height':'50px', 'width':'100px', 'padding': '5px', 'text-align': 'center', 'border-radius': '8px'}
+header_style = {'fontSize': '36px', 'textAlign': 'center', 'margin':'0px'}
+search_button = {'margin-left':'40%', 'height':'50px', 'width':'100px', 'padding': '5px', 'textAlign': 'center', 'border-radius': '8px'}
 
 # Define the layout for the home page
 home_layout = html.Div([
@@ -186,12 +190,6 @@ def populate_dropdown_options(pathname, selected_elements):
         # Create a list of dictionaries for beam energy options in ascending order
         beam_energy_options = [{'label': f"{energy} - '{', '.join(beam_energies_dict[energy])}'", 'value': energy} for energy in sorted(beam_energies_dict.keys())]
 
-        # print("For TESTING:")
-        # print("Elements:", element_options)
-        # print("beam energies:", beam_energy_options)
-        # print("ELEMENTS NAMING IN THE FILE****:", element)
-        # print("BEAM ENERGY NAMING IN THE FILE****:", beam_energy)
-
         return element_options, beam_energy_options
 
     return [], []
@@ -213,34 +211,26 @@ def update_search_results(n_clicks, elements, beam_energies, start_date, start_t
     if n_clicks > 0:
         spectra_divs = []
 
-        for group in testf:
-            for key in testf[group]:
-                ds = testf[group][key]
+        query = {}
+        if elements:
+            query['element'] = elements
+        if beam_energies:
+            query['beam_energy'] = beam_energies
+        if start_date:
+            start_match = re.search('([0-9]+)-([0-9]+)-([0-9]+)', start_date)
+            if start_match is not None:
+                query['lower_date_taken'] = start_match.group(1) + '/' + start_match.group(2) + '/' + start_match.group(3)
+        if end_date:
+            end_match = re.search('([0-9]+)-([0-9]+)-([0-9]+)', end_date)
+            if end_match is not None:
+                query['upper_date_taken'] = end_match.group(1) + '/' + end_match.group(2) + '/' + end_match.group(3)
 
-                element_ds = ds.attrs.get('Element')
-                beam_energy_ds = ds.attrs.get('Beam E eV')
-                date_str_ds = ds.attrs.get('rawdate')
-                time_str_ds = ds.attrs.get('rawtime')
-                filename_ds = ds.attrs.get('File name', '')
+        result_raw = requests.get(f'http://127.0.0.1:8000/spectra/metadata?page=0&per_page=0', params=query)
+        result = json.loads(json.loads(result_raw.content))
 
-                # Exclude files without names
-                if not filename_ds:
-                    continue
-
-                if (
-                    (not elements or element_ds in elements) and
-                    (not beam_energies or beam_energy_ds in beam_energies)
-                ):
-                    if (
-                        (start_date and date_str_ds and pd.to_datetime(date_str_ds, format='%d%b%Y').date() < pd.to_datetime(start_date).date()) or
-                        (end_date and date_str_ds and pd.to_datetime(date_str_ds, format='%d%b%Y').date() > pd.to_datetime(end_date).date())
-                    ):
-                        continue
-
-                    if not elements or element_ds in elements:
-                        if not beam_energies or beam_energy_ds in beam_energies:
-                            if pd.notna(element_ds) and pd.notna(beam_energy_ds):  # Check for NaN values
-                                spectra_divs.append(generate_spectra_checklists(group, key))
+        if result['records']:
+            for file_name, spectra_id in zip(result['records']['file_name'], result['records']['spectra_id']):
+                spectra_divs.append(generate_spectra_checklists(spectra_id, file_name))
 
         if spectra_divs:
             return [
@@ -255,15 +245,15 @@ def update_search_results(n_clicks, elements, beam_energies, start_date, start_t
     return ''
 
 # Generate dynamic checklist divs
-def generate_spectra_checklists(group: str, spectrum_key: str):
+def generate_spectra_checklists(spectra_id: str, spectrum_key: str):
     return html.Div([
         dcc.Checklist(
-            options=[{'label': '', 'value': group + " " + spectrum_key}],
+            options=[{'label': '', 'value': spectra_id}],
             id='spectrum1-checklist',
             value=[]
         ),
         dcc.Checklist(
-            options=[{'label': spectrum_key, 'value': group + " " + spectrum_key}],
+            options=[{'label': spectrum_key, 'value': spectra_id}],
             id='spectrum2-checklist',
             value=[]
         ),
@@ -311,18 +301,25 @@ def update_plot(pathname, data):
         if not selected_spectra1 and not selected_spectra2:
             return 'Select spectra to plot', [], []
 
-        for spectrum1 in selected_spectra1:
-            group, key = spectrum1.split(' ')
-            try:
-                ds1 = testf[group][key]
-                intensity1 = np.clip(ds1[...][0, :], 0, 7000).tolist()
+        query = {}
+        query['ids'] = ','.join(str(value) for value in (selected_spectra1))
+        result1_raw = requests.get(f'http://127.0.0.1:8000/spectra/data?page=0&per_page=0', params=query)
+        result1 = json.loads(json.loads(result1_raw.content))
 
+        query['ids'] = ','.join(str(value) for value in (selected_spectra2))
+        result2_raw = requests.get(f'http://127.0.0.1:8000/spectra/data?page=0&per_page=0', params=query)
+        result2 = json.loads(json.loads(result2_raw.content))
+
+        for dataset_key in result1['records'].keys():
+            plot_data = np.array(result1['records'][dataset_key]['data'])
+            plot_data = np.reshape(plot_data, (1, 2048))
+            try:
                 scatter_plots1.append(
                     go.Scatter(
-                        x=list(range(len(C.apply(ds1[...])))),
-                        y=C.apply(ds1[...]),
+                        x=list(range(len(C.apply(plot_data[...])))),
+                        y=C.apply(plot_data[...]),
                         mode='lines',
-                        name=ds1.attrs['File name'][:40]
+                        name=result1['records'][dataset_key]['file_name'][:40]
                     )
                 )
             except KeyError:
@@ -334,17 +331,16 @@ def update_plot(pathname, data):
         else:
             plot1 = html.Div("No data to plot for Spectrum 1.")
 
-        for spectrum2 in selected_spectra2:
-            group, key = spectrum2.split(' ')
+        for dataset_key in result2['records'].keys():
+            plot_data = np.array(result2['records'][dataset_key]['data'])
+            plot_data = np.reshape(plot_data, (1, 2048))
             try:
-                ds2 = testf[group][key]
-                intensity2 = np.clip(ds2[...][0, :], 0, 7000).tolist()
                 scatter_plots2.append(
                     go.Scatter(
-                        x=list(range(len(C.apply(ds2[...])))),
-                        y=C.apply(ds2[...]),
+                        x=list(range(len(C.apply(plot_data[...])))),
+                        y=C.apply(plot_data[...]),
                         mode='lines',
-                        name=ds2.attrs['File name'][:40]
+                        name=result2['records'][dataset_key]['file_name'][:40]
                     )
                 )
             except KeyError:
@@ -358,7 +354,7 @@ def update_plot(pathname, data):
 
         return plot1, plot2
 
-    return '', html.Div(), html.Div()
+    return html.Div(), html.Div()
 
 class CosmicRayFilter:
     """
